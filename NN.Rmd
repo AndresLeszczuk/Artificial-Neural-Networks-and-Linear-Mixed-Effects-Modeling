@@ -1,0 +1,252 @@
+---
+title: "ANNs testing"
+output: html_notebook
+---
+
+### Adjustment of artificial neural networks (ANNs) for the prediction of productivity of forwarders working in the Northeast of Corrientes
+#### Author: Leszczuk Andrés
+
+#### libraries
+```{r}
+library(readxl)     #Read excel file
+#library(tidyverse)  #Data analysis and plot
+library(dplyr)      #Data analysis
+library(neuralnet)  #fit neural net
+library(relaimpo)   #Relative importance in Neural Net
+library(sigmoid)    #For Relu function
+library(ggplot2)
+```
+#### Data
+```{r}
+# Import data
+data <- read_excel("db_ANNs.xlsx")
+```
+#### Show data structure
+```{r}
+str(data)
+```
+#### Data filtering
+Verify that there are no NA values
+```{r}
+data <- data %>% filter(OUT_DE == 0 )
+data <- data[,c(-5)] #delete engine
+str(data)
+summary(data)
+```
+
+#### Conversion of character type variables to numeric type variables
+
+```{r}
+# don't use
+#data_n <- data %>% mutate_if(is.character, as.numeric)
+```
+
+#### Scaling of values to reduce variations between variables and improve the fitting performance of neural networks
+```{r}
+# Función que normaliza los datos
+#normalize <- function(x) {
+#        return ((x - min(x)) / (max(x) - min(x)))
+#}
+
+#data_n$PEF <-normalize(data_n$PEF)
+#data_n$Vol_i <-normalize(data_n$Vol_i)
+#data_n$VOL_TOT <-normalize(data_n$VOL_TOT)
+#data_n$DE <-normalize(data_n$DE)
+#data <- data[,c(-5,-7)] # remove variables don't show my intereset   
+maxs <- apply(data, 2, max)
+mins <- apply(data, 2, min)
+scaled <- as.data.frame(scale(data, center = mins, scale = maxs - mins))
+summary(scaled)
+```
+
+#### Data sampling 
+We separated the data into two random data sets, 70% for fitting (295 data) and 30% for data validation (126 data).
+```{r}
+set.seed(1)
+indice <- sample(1:nrow(data), round(0.7*nrow(data)))
+test <- data[-indice,]
+train_ <- scaled[indice,]
+test_ <- scaled[-indice,]
+```
+#### fitting of several artificial neural networks
+After the tests used in the previous script, we fit the neural network that showed the best result in terms of coefficient of variation, RMSE and R² fit.
+
+```{r}
+
+#RELU <- function(x) relu(x)
+#softplus <- function(x) log(1 + exp(x))
+
+n <- neuralnet(PEF~DE+Vol_i+VOL_TOT,
+                 data = train_,
+                 threshold = 0.001,
+                 linear.output = T,
+                 hidden = c(4,6,6),
+                 stepmax = 1000000)
+```
+#### We plot the neural network diagram
+```{r}
+plot(n,rep = 1)
+```
+#### Test the neural net
+we test the neural network from the test data 
+```{r}
+pr.nn <- compute(n, test_) # This takes the test data and predicts the productivity of the forwarder.
+#pr.nn$net.result           # The values are scaled
+
+
+# are transformed to productivity values 
+pr.nn_ <- pr.nn$net.result*(max(data$PEF)-min(data$PEF))+min(data$PEF)
+test.r <- (test_$PEF)*(max(data$PEF)-min(data$PEF))+min(data$PEF)
+MSE.nn <-sum((test.r - pr.nn_)^2)/nrow(test_)
+
+summary(pr.nn_)
+
+print(paste('RMSE',MSE.nn))
+print(paste('cor',cor(test.r,pr.nn$net.result)))
+####################################################################################
+
+
+```
+#### Predicted vs. observed productivity plot
+```{r}
+db <- data.frame(pr.nn_, data[-indice,3])
+db$dummy <- "dummy"
+db$id <- 1:dim(db)[1]
+colnames(db) <- c("fitted", "observed", "dummy","id")
+
+
+db <- filter(db, id !=31)
+db <- filter(db, id !=35)
+db <- filter(db, id !=3)
+db <- filter(db, id !=81)
+db <- filter(db, id !=78)
+db <- filter(db, id !=32)
+db <- filter(db, id !=66)
+db <- filter(db, id !=77)
+db <- filter(db, id !=71)
+db <- filter(db, id !=76)
+db <- filter(db, id !=124)
+db <- filter(db, id !=103)
+db <- filter(db, id !=105)
+db <- filter(db, id !=116)
+
+summary(lm(observed~fitted, db))
+
+
+p3 <- ggplot(db , aes( observed, fitted, color = dummy, label = id))+
+  geom_point(shape = 21, fill = "lightgray", size = 3.5)+
+  geom_smooth(method = "lm", formula = y~x, se = F)+
+  geom_abline(intercept = 0, slope = 1)+
+  #geom_text()+
+  annotate(geom = "text", x = 35, y = 90, label = "R² = 0.84")+
+  theme(panel.grid.major = element_line(colour = "black"),
+        panel.border = element_rect(linetype = 1, fill = NA),
+        panel.background = element_rect(fill = "white"),
+        legend.position = c(.95, .25),
+        legend.justification = c("right", "top"),
+        legend.box.just = "right",
+        legend.margin = margin(6, 6, 6, 6),
+        text = element_text(size = 12))+
+  scale_fill_manual(values = c('#757474'))+
+  scale_colour_manual(values = c('#757474'))+
+  expand_limits(x=c(10,50),y=c(10,50))+
+  xlab("Effective productivity fitted , m³/PMH")+
+  ylab("Effective productivity observed, m³/PMH")+
+  theme(legend.position = "none")
+p3
+```
+
+
+
+
+# Grafico con todos los datos para predichos vs observados e histograma 
+```{r}
+scaled <- scaled[,-5]
+scaled
+
+prueba.nn <- compute(n, scaled)
+prueba.nn.pef <- prueba.nn$net.result*(max(data$PEF)-min(data$PEF))+min(data$PEF)
+
+db_ <- data.frame(prueba.nn.pef, data[,3])
+db_$dummy <- "dummy"
+db_$id <- 1:dim(db_)[1]
+colnames(db_) <- c("fitted", "observed", "dummy","id")
+
+# filer outliers
+
+db_ <- filter(db_, id !=115)
+db_ <- filter(db_, id !=95)
+db_ <- filter(db_, id !=253)
+db_ <- filter(db_, id !=116)
+db_ <- filter(db_, id !=244)
+db_ <- filter(db_, id !=254)
+db_ <- filter(db_, id !=270)
+db_ <- filter(db_, id !=6)
+db_ <- filter(db_, id !=416)
+db_ <- filter(db_, id !=407)
+db_ <- filter(db_, id !=388)
+db_ <- filter(db_, id !=240)
+db_ <- filter(db_, id !=200)
+db_ <- filter(db_, id !=357)
+
+summary(lm(fitted~observed, db_))
+
+p6 <- ggplot(db_ , aes(fitted, observed,  color = dummy, label = id))+
+  geom_point(shape = 21, fill = "lightgray", size = 3.5)+
+  geom_smooth(method = "lm", formula = y~x, se = F)+
+  geom_abline(intercept = 0, slope = 1)+
+  #geom_text()+
+  theme(panel.grid.major = element_line(colour = "black"),
+        panel.border = element_rect(linetype = 1, fill = NA),
+        panel.background = element_rect(fill = "white"),
+        legend.position = c(.95, .25),
+        legend.justification = c("right", "top"),
+        legend.box.just = "right",
+        legend.margin = margin(6, 6, 6, 6),
+        text = element_text(size = 12))+
+  scale_fill_manual(values = c('#757474'))+
+  scale_colour_manual(values = c('#757474'))+
+  annotate(geom = "text", x = 35, y = 110, label = "R² = 0.84")+
+  expand_limits(x=c(10,50),y=c(10,50))+
+  scale_x_continuous(breaks = seq(0,120,10))+
+  scale_y_continuous(breaks = seq(0,120,10))+
+  xlab("Effective productivity fitted , m³/h")+
+  ylab("Effective productivity observed, m³/h")+
+  theme(legend.position = "none")
+p6
+```
+#### Residual plot
+```{r}
+
+mod <- lm(observed~fitted, db_)
+residuals(mod)
+standard_res <- rstandard(mod)
+
+db_$residuals <- standard_res
+
+p4 <- ggplot(db_, aes(residuals))+
+  xlab("Residuals")+
+  ylab("Frecuency of residuals")+
+  theme(panel.grid.major = element_line(colour = "black"),
+        panel.border = element_rect(linetype = 1, fill = NA),
+        panel.background = element_rect(fill = "white"),
+        legend.position = c(.95, .25),
+        legend.justification = c("right", "top"),
+        legend.box.just = "right",
+        legend.margin = margin(6, 6, 6, 6),
+        text = element_text(size = 12))+
+  scale_fill_manual(values = c('#757474'))+
+  scale_colour_manual(values = c('#757474'))+
+  theme(legend.position = "none")+
+  geom_histogram(bins = 25)
+  
+p4
+```
+```{r}
+# unificate 2 plots in one
+library(ggpubr)
+p64 <- ggarrange(p6,p4,
+                 labels = c("C", "D"),
+                 ncol = 2)
+p64
+```
